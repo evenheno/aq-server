@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>${title}</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%
+        }
+
+        body {
+            font: .8em Arial, sans-serif;
+            color: #686868;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(0, #fff, #fff);
+            box-shadow: #3e3e3e80 0 0 150px inset
+        }
+
+        .error-container {
+            min-width: 30em;
+            max-width: 40em;
+            padding: 1em;
+            margin: 2em auto;
+            background: linear-gradient(0, #ffecec, white);
+            border: 1px solid #ff4949;
+            border-radius: 8px;
+            box-shadow: 1px 1px 8px #00000029
+        }
+
+        .error-header {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #ff4d4d
+        }
+
+        .error-exception {
+            margin: .25em 0;
+            padding: .8em;
+            background: #ffe1e1;
+            border: 1px solid #ffbaba;
+            border-radius: 8px;
+            color: #d03636
+        }
+
+        .error-ticket {
+            font-weight: bold
+        }
+    </style>
+</head>
+
+<body>
+    <div class="error-container">
+        <div class="error-header">${header}</div>
+        <p class="error-message">${shortDesc}</p>
+        <div class="error-exception">${longDesc}</div>
+        <p class="error-ticket">${ticket} | ${ts}</p>
+    </div>
+</body>
+
+</html>

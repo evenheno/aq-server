@@ -1,0 +1,132 @@
+{
+  "buildNumber": 173,
+  "buildTS": 1681983952608,
+  "version": "1.0.11",
+  "filesSummary": [
+    {
+      "path": "build.json",
+      "crc": 1891911505,
+      "fileSize": 2974
+    },
+    {
+      "path": "package.json",
+      "crc": 301666516,
+      "fileSize": 1246
+    },
+    {
+      "path": "resources\\public\\index.html",
+      "crc": 1804515821,
+      "fileSize": 2645
+    },
+    {
+      "path": "resources\\templates\\error-page.html",
+      "crc": 3709473087,
+      "fileSize": 1623
+    },
+    {
+      "path": "src\\aq-server\\aqs-base-error.ts",
+      "crc": 443303199,
+      "fileSize": 1956
+    },
+    {
+      "path": "src\\aq-server\\aqs-controller.ts",
+      "crc": 3653752513,
+      "fileSize": 4715
+    },
+    {
+      "path": "src\\aq-server\\aqs-controllers\\aqs-storage-controller.ts",
+      "crc": 1813389754,
+      "fileSize": 5472
+    },
+    {
+      "path": "src\\aq-server\\aqs-controllers\\aqs-user-controller.ts",
+      "crc": 972496960,
+      "fileSize": 3927
+    },
+    {
+      "path": "src\\aq-server\\aqs-controllers\\index.ts",
+      "crc": 3683644332,
+      "fileSize": 81
+    },
+    {
+      "path": "src\\aq-server\\aqs-dto.ts",
+      "crc": 2857510777,
+      "fileSize": 856
+    },
+    {
+      "path": "src\\aq-server\\aqs-errors.ts",
+      "crc": 1914622948,
+      "fileSize": 393
+    },
+    {
+      "path": "src\\aq-server\\aqs-multer-config.ts",
+      "crc": 2981484811,
+      "fileSize": 660
+    },
+    {
+      "path": "src\\aq-server\\aqs-server.ts",
+      "crc": 878478924,
+      "fileSize": 7218
+    },
+    {
+      "path": "src\\aq-server\\aqs-template.ts",
+      "crc": 267816078,
+      "fileSize": 1356
+    },
+    {
+      "path": "src\\aq-server\\aqs-token-payload.type.ts",
+      "crc": 829028711,
+      "fileSize": 53
+    },
+    {
+      "path": "src\\aq-server\\index.ts",
+      "crc": 2165313069,
+      "fileSize": 251
+    },
+    {
+      "path": "src\\aq-server\\server-config.type.ts",
+      "crc": 653424008,
+      "fileSize": 154
+    },
+    {
+      "path": "src\\aq-server\\server-status.type.ts",
+      "crc": 1635776856,
+      "fileSize": 136
+    },
+    {
+      "path": "src\\aq-sqlite-adapter\\aq-sqlite-adapter.ts",
+      "crc": 4002973267,
+      "fileSize": 15016
+    },
+    {
+      "path": "src\\aq-sqlite-adapter\\aq-sqlite-adapter.types.ts",
+      "crc": 1030724526,
+      "fileSize": 974
+    },
+    {
+      "path": "src\\aq-sqlite-adapter\\aq-sqlite-db-column.ts",
+      "crc": 1149931364,
+      "fileSize": 2992
+    },
+    {
+      "path": "src\\aq-sqlite-adapter\\aqs-crc.ts",
+      "crc": 782933782,
+      "fileSize": 739
+    },
+    {
+      "path": "src\\aq-sqlite-adapter\\index.ts",
+      "crc": 2010766741,
+      "fileSize": 104
+    },
+    {
+      "path": "src\\index.ts",
+      "crc": 146840127,
+      "fileSize": 184
+    },
+    {
+      "path": "tsconfig.json",
+      "crc": 883331558,
+      "fileSize": 421
+    }
+  ]
+}
