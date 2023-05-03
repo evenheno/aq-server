@@ -1,6 +1,6 @@
 {
     "name": "aq-server",
-    "version": "1.0.30",
+    "version": "1.0.31",
     "description": "Aquarius Server",
     "main": "index.js",
     "type": "commonjs",

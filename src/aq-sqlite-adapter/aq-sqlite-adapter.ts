@@ -338,12 +338,9 @@ export class SQLiteAdapter {
             try {
                 this._db!.run(sql, params, function (error) {
                     if (error) { reject(error) }
-                    const lastId = this?.lastID;
-                    const lastStringId = typeof this.lastID === 'number' ?
-                        this.lastID.toString() : typeof this.lastID === 'string' ?
-                            this.lastID : Buffer.from((this as any).lastID).toString();
+                    const lastId: any = this?.lastID;
                     const changes = this?.changes;
-                    resolve({ lastStringId: lastStringId, lastId: lastId, changes: changes });
+                    resolve({ lastStringId: `${lastId}`, lastId: lastId, changes: changes });
                 });
             } catch (error) {
                 reject(new AQServerDBError('DB_ERROR_RUN', error));
