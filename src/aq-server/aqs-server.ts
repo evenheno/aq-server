@@ -2,6 +2,7 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import bodyParser from 'body-parser';
 import express from 'express';
@@ -12,6 +13,7 @@ import { AQTemplate } from './aqs-template';
 import { BaseError } from './aqs-base-error';
 import { env } from 'process';
 import { AQServerError } from './aqs-errors';
+
 import {
   DBColumnID,
   DBColumnInteger,
@@ -32,10 +34,10 @@ export class AQSServer {
   private _app: express.Application;
   private _server?: http.Server;
   private _dirApp: string;
-  private _dirPublic?: string;
+  private _publicDir?: string;
   private _db: SQLiteAdapter;
   private _config: TAQSServerConfig;
-  private _controllers: Array<AQSController>;
+  private _controllers: AQSController[];
   private _address: string | undefined;
 
   public get db() { return this._db; }
@@ -44,33 +46,42 @@ export class AQSServer {
   public get port() { return this._port; }
   public get address() { return this._address; }
 
-  public constructor(config?: TAQSServerConfig) {
-    this._controllers = [];
+  public constructor(config?: TAQSServerConfig, controllers?: AQSController[]) {
     this._dirApp = env['APP_DIR']!;
-    const defaultPublic = path.join(this._dirApp, 'resources', 'public');
+    const defaultPublicDir = path.join(this._dirApp, 'resources', 'public');
     const defaultPort = 3000;
     const defaultServerName = 'AQServer';
     const defaultDatabaseFile = 'database.db';
+    const defaultCors = false;
     this._config = {
       port: defaultPort,
       serverName: defaultServerName,
-      publicDir: defaultPublic,
+      publicDir: defaultPublicDir,
       databaseFile: defaultDatabaseFile,
+      enableCors: defaultCors,
       ...(config || {})
     };
     logger.info('Server Config', this._config);
     this._serverName = this._config.serverName;
-    this._dirPublic = this._config.publicDir;
+    this._publicDir = this._config.publicDir;
     this._serverStatus = 'IDLE';
     this._app = express();
     this._port = this._config?.port || 3000;
-    this._db = new SQLiteAdapter(this._config.databaseFile!, { key: 'A91G847FE1EIPM2560SGRWO' });
-    this._controllers = this.onControllers();
-    this._initRoutes();
+    this._db = new SQLiteAdapter(this._config.databaseFile);
+    this._controllers = [
+      new StorageController(),
+      new UserController(),
+      //new DataController(),
+    ];
+    if (controllers) { this._controllers.push(...controllers) }
   }
 
-  private _initRoutes() {
-    logger.action('Initiating body parser');
+  private async _initRoutes() {
+    logger.action('Initiating server routes');
+    if (this._config.enableCors) {
+      const corsHandler = cors(this._config.corsOptions);
+      this._app.use(corsHandler);
+    }
     this._app.use(cookieParser())
     this._app.use(bodyParser.json());
     this._app.use(bodyParser.urlencoded({ extended: true }));
@@ -78,18 +89,17 @@ export class AQSServer {
     logger.action('Initiating router logger');
     this._app.use((req: Request, res: Response, next: NextFunction) => {
       logger.request(`${req.path} (${req.method.toUpperCase()})`);
-      res.setHeader('Access-Control-Allow-Headers', '*');
       next();
     });
 
     logger.action('Registering controllers');
-    const controllers = [
-      new StorageController(this),
-      new UserController(this),
-      ...this.onControllers()
-    ];
-    for (let controller of controllers) {
-      logger.action('Registering controller', { id: controller.id, path: controller.path })
+
+    for (let controller of this._controllers) {
+      logger.action('Initiating controller routes', {
+        controllerId: controller.id,
+        path: controller.path
+      });
+      await controller.initRoutes();
       this._app.use(controller.path, controller.router);
     }
 
@@ -158,13 +168,18 @@ export class AQSServer {
   }
 
   private async _onBeforeStart() {
-    await this.db.addTable('errors', [
+    await this.db.createTable('errors', [
       new DBColumnID('errorId'),
       new DBColumnString('message'),
       new DBColumnString('stack'),
       new DBColumnString('ticket'),
       new DBColumnInteger('ts')
     ]);
+    for (let controller of this._controllers) {
+      logger.action('Initiating controller', { controllerId: controller.id })
+      controller.server = this;
+      await controller.init();
+    }
     await this.onBeforeStart();
   }
 
@@ -172,23 +187,21 @@ export class AQSServer {
   public async onStart() { }
   public async onBeforeStop() { }
   public async onStop() { }
-  public onControllers(): AQSController[] {
-    return [];
-  }
-
   public async start(): Promise<void> {
     try {
       logger.action('Starting server', { serverName: this._serverName, port: this._port });
       this._serverStatus = 'STARTING';
       await this._onBeforeStart();
+      await this._initRoutes();
       await new Promise<void>((resolve) => {
         this._server = this._app.listen(this._port, () => {
           resolve();
         });
       })
       this._address = os.hostname().toLowerCase();
-      this._serverStatus = 'LISTENING'
+      this._serverStatus = 'LISTENING';
       logger.success('AQServer is running', { port: this._port, address: this._address });
+      await this.onStart();
     } catch (error) {
       throw new AQServerError('Failed to start server', error);
     }
@@ -197,12 +210,14 @@ export class AQSServer {
   public async stop() {
     logger.action('Stopping server', { serverName: this._serverName, port: this._port })
     this._serverStatus = 'STOPPING';
+    await this.onBeforeStop();
     this._server?.close((error) => {
       if (error) {
         throw new AQServerError('Failed to stop server', error);
       }
     })
     this._serverStatus = 'STOPPED';
+    await this.onStop();
     logger.warn('Server has stopped');
   }
 }

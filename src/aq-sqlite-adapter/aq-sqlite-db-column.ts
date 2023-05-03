@@ -1,3 +1,4 @@
+import uuid from 'uuid';
 import { IDBColumn, TDBDataType, TDefaultValues } from "./aq-sqlite-adapter.types";
 
 export class DBColumn extends Object implements IDBColumn {
@@ -51,6 +52,20 @@ export class DBColumnStringID extends DBColumn {
             nullable: false,
             pk: true,
             unique: true
+        })
+    }
+}
+
+export class DBColumnAutoStringID extends DBColumn {
+    constructor(columnName: string) {
+        const defaultValue = `(CAST(LOWER(substr(hex(randomblob(2)), 1, 4)) || '-' || LOWER(substr(hex(randomblob(2)), 1, 4)) || '-' || LOWER(substr(hex(randomblob(2)), 1, 4)) AS TEXT))`;
+        super({
+            columnName: columnName,
+            dataType: 'TEXT',
+            nullable: false,
+            pk: true,
+            unique: true,
+            defaultValue: defaultValue
         })
     }
 }

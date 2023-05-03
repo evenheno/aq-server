@@ -2,96 +2,118 @@ import { env } from "process";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 
-import { DTOLoginReq, DBOUser, DTORegisterReq, DBONewUser } from '../aqs-dto';
-import { DTORegisterRes } from '../aqs-dto';
 import { AQLogger } from "aq-logger";
-import { DBColumnID, DBColumnString, DBColumnInteger } from "../../aq-sqlite-adapter";
+import { DBColumnID, DBColumnString, DBColumnAutoStringID, DBColumnBlob } from "../../aq-sqlite-adapter";
 import { AQSController } from '../aqs-controller';
-import { AQSServer } from "../aqs-server";
 import { AQServerError } from '../aqs-errors';
+import { TExecuter } from "../aqs-types";
 
 const logger = new AQLogger('UserController');
+
 
 export class UserController extends AQSController {
 
     private readonly saltRounds = 10;
 
-    constructor(server: AQSServer) {
-        super(server, 'UserController', '/users');
+    constructor() {
+        super('UserController', '/users');
     }
 
-    private async _initDB() {
-        await this.db.addTable('users', [
-            new DBColumnID('userId'),
+    private _register: TExecuter<DTORegisterReq> = async (body) => {
+        const user = await this.db.getSingle<DBOUser>('users', {
+            filter: { email: body.email }
+        });
+
+        if (user != null) {
+            throw new AQServerError('User already exists')
+        }
+
+        const salt = await bcrypt.genSalt(this.saltRounds);
+        const hashedPassword = await bcrypt.hash(body.password, salt);
+
+        const newUser: DBONewUser = {
+            displayName: body.displayName,
+            email: body.email,
+            password: hashedPassword,
+            salt
+        }
+        await this.db.insert('users', newUser);
+    }
+
+    private _getUser: TExecuter<DTORegisterReq> = async (body, params) => {
+        const userId = params.number('userId');
+        if (!userId) { throw new AQServerError('Parameter: "userId" not supplied.') }
+        const user = await this.db.getSingle('users', { filter: { userId: userId } });
+        if (!user) { throw new AQServerError(`User with id: "${userId}" not found`) }
+        return user;
+    }
+
+    private _login: TExecuter<DTOLoginReq> = async (body, params, server, token) => {
+        logger.action('Logging in', body);
+        const user = await this.db.getSingle<DBOUser>('users', {
+            filter: { email: body.email }
+        });
+        if (user == null) { throw new AQServerError('Invalid credentials') }
+
+        const isValidPassword = await bcrypt.compare(body.password, user.password);
+        if (!isValidPassword) { throw new AQServerError('Invalid credentials') }
+
+        logger.info('User found', user);
+        const secret: jwt.Secret = (env as any)['JWT_SECRET'] as string;
+        logger.action('Signing JWT token', { secret: secret });
+        const payload = { userId: user.userId, displayName: user.displayName };
+        const newToken = jwt.sign(payload, secret, { expiresIn: '7d', allowInsecureKeySizes: true });
+        logger.info('JWT Token created', { token: newToken, userId: user.userId });
+        server.response.cookie('token', newToken, { httpOnly: true });
+    }
+
+
+    public async init() {
+        await this.db.createTable('users', [
+            new DBColumnAutoStringID('userId'),
             new DBColumnString('displayName'),
             new DBColumnString('email'),
             new DBColumnString('password'),
             new DBColumnString('salt'),
-            new DBColumnString('publicKey'),
-            new DBColumnString('privateKey')
+            new DBColumnString('publicKey')
         ]);
 
-        await this.db.addTable('userFiles', [
+        await this.db.createTable('userFiles', [
             new DBColumnID('userFileId'),
-            new DBColumnInteger('userId'),
+            new DBColumnBlob('userId'),
             new DBColumnString('storageFileId')
         ]);
     }
 
     public async initRoutes() {
-        await this._initDB();
-
-        this.register({
-            type: 'get', path: '/', authenticate: false,
-            executer: async (express, token) => {
-                const users = await this.db.get('users');
-                return users;
-            }
-        });
-
-        this.register({
-            type: 'post', path: '/register', authenticate: false,
-            executer: async (express, token) => {
-                const body: DTORegisterReq = express.request.body;
-                const user: DBOUser | undefined = await this.db.getSingle('users', { email: body.email });
-                if (user != null) { throw new AQServerError('Invalid Credentials') }
-
-                const salt = await bcrypt.genSalt(this.saltRounds);
-                const hashedPassword = await bcrypt.hash(body.password, salt);
-
-                const newUser: DBONewUser = {
-                    displayName: body.displayName,
-                    email: body.email,
-                    password: hashedPassword,
-                    salt
-                }
-                const userId = await this.db.insert('users', newUser);
-                const result: DTORegisterRes = { id: userId }
-                return result;
-            }
-        });
-
-        this.register({
-            type: 'post', path: '/login', authenticate: false,
-            executer: async (express, token) => {
-                const body: DTOLoginReq = express.request.body;
-                logger.action('Logging in', body);
-                const user = await this.db.getSingle<DBOUser>('users', {
-                    email: body.email
-                });
-                if (user == null) { throw new AQServerError('Invalid credentials') }
-
-                const isValidPassword = await bcrypt.compare(body.password, user.password);
-                if (!isValidPassword) { throw new AQServerError('Invalid credentials') }
-
-                logger.info('User found', user);
-                const secret: jwt.Secret = (env as any)['JWT_SECRET'] as string;
-                logger.action('Signing JWT token', { secret: secret });
-                const payload = { userId: user.userId, displayName: user.displayName };
-                const newToken = jwt.sign(payload, secret, { expiresIn: '7d', allowInsecureKeySizes: true });
-                logger.info('JWT Token created', { token: newToken, userId: user.userId });
-                express.response.cookie('token', newToken, { httpOnly: true });
-            }
-        });
+        this.route('GET', '/', this._getUser);
+        this.route('POST', '/register', this._register);
+        this.route('POST', '/login', this._login);
     }
+}
+
+export interface DTORegisterRes {
+    userId: string
+}
+
+export interface DTORegisterReq {
+    displayName: string,
+    email: string,
+    password: string
+}
+
+export interface DTOLoginReq {
+    email: string,
+    password: string
+}
+
+export type DBOUser = DBONewUser & {
+    userId: number;
+}
+
+export type DBONewUser = {
+    displayName: string;
+    email: string;
+    password: string;
+    salt: string;
 }

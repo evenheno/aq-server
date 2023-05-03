@@ -1,4 +1,4 @@
-const { AQSServer, AQSController } = require('../dist');
+const { AQSServer, AQSController, GPTFetcher } = require('../dist');
 const {AQLogger} = require('aq-logger');
 
 const logger = new AQLogger('AQServerTest');
@@ -29,6 +29,7 @@ async function init() {
     const server = new Server();
     logger.action('Starting instance');
     await server.start();
+
 };
 
 init();

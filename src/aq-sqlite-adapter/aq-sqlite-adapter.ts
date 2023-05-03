@@ -1,4 +1,4 @@
-import fs from 'fs';
+import fs, { ReadStream } from 'fs';
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import { SQLiteAdapterGetOptions, SQLiteAdapterOptions, TDBState, TParam, TRunResult, TSQLiteObject } from './aq-sqlite-adapter.types';
@@ -15,11 +15,11 @@ export class SQLiteAdapter {
     private _dbFile: string;
     private _state: TDBState;
     private _db?: sqlite3.Database;
-    private _key: string | undefined;
+    private _key?: string;
 
-    constructor(dbFile: string, options?: SQLiteAdapterOptions) {
+    constructor(dbFile?: string, options?: SQLiteAdapterOptions) {
         this._state = 'CLOSED';
-        this._dbFile = dbFile;
+        this._dbFile = dbFile || 'database.db';
         this._key = options?.key;
     }
 
@@ -43,13 +43,13 @@ export class SQLiteAdapter {
     }
 
     private async initDB() {
-        await this.addTable('storageHeaders', [
+        await this.createTable('storageHeaders', [
             new DBColumnID('storageHeaderId'),
             new DBColumnInteger('crc'),
             new DBColumnInteger('fileSize')
         ]);
 
-        await this.addTable('storageFiles', [
+        await this.createTable('storageFiles', [
             new DBColumnStringID('storageFileId'),
             new DBColumnInteger('storageHeaderId'),
             new DBColumnString('fileName'),
@@ -57,24 +57,32 @@ export class SQLiteAdapter {
             new DBColumnInteger('userId')
         ]);
 
-        await this.addTable('dataChunks', [
+        await this.createTable('dataChunks', [
             new DBColumnID('dataChunkId'),
             new DBColumnInteger('storageHeaderId'),
-            new DBColumnBlob('chunk')
+            new DBColumnBlob('blob')
         ]);
     }
 
-    public async addTable(tableName: string, columns: DBColumn[]) {
+    public async createTable(tableName: string, columns: DBColumn[]) {
         try {
             const sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns.join(', ')})`;
             const result = await this.run(sql);
             if (result.changes) {
                 logger.success('Table created.', { tableName: tableName });
-            } else {
-                logger.info('Skipping table creation, table already exists.', { tableName: tableName })
             }
         } catch (error) {
             throw new AQServerDBError('DB_ERROR_FAILED_INSERT_TABLE', error);
+        }
+    }
+
+    public async transaction(fn: (db: SQLiteAdapter) => void) {
+        await this.beginTransaction();
+        try {
+            await fn(this);
+            await this.endTransaction();
+        } catch (error) {
+            await this.rollbackTransaction();
         }
     }
 
@@ -126,20 +134,69 @@ export class SQLiteAdapter {
         return result;
     }
 
+    async streamStorageFile(storageFileId: string) {
+        logger.debug('Storage file requested', { storageFileId: storageFileId });
+
+        const storageFile = await this.getSingle<DBOStorageFile>(
+            'storageFiles', { filter: { storageFileId: storageFileId } });
+        if (!storageFile) { throw new AQServerDBError('Storage file entry has not been found'); }
+
+        const storageHeader = await this.getSingle<DBOStorageHeader>(
+            'storageHeaders', {
+            filter: { storageHeaderId: storageFile.storageHeaderId }
+        });
+        if (!storageHeader) { throw new AQServerDBError('Storage file header has not found'); }
+
+        logger.action('Fetching data chunk headers');
+        const chunkHeaders = await this.get('dataChunks', {
+            orderBy: 'dataChunkId',
+            columns: ['dataChunkId'],
+            filter: {
+                storageHeaderId: storageFile.storageHeaderId
+            }
+        });
+
+        logger.info('Chunks found', { found: chunkHeaders.length });
+        const crcCalculator = new AQCRCCalc();
+        for (const chunkHeader of chunkHeaders) {
+            const chunkId = chunkHeader.dataChunkId;
+
+            logger.action('Fetching chunk', { chunkId: chunkId })
+            const row = await this.getSingle<any>('dataChunks',
+                { columns: ['blob'], filter: { dataChunkId: chunkId } });
+
+            const blob = row.blob;
+
+            crcCalculator.digest(blob);
+            const buffer = Buffer.from(blob);
+            await new Promise<void>((resolve) => {
+
+            });
+
+            logger.success('Chunk fetched', row);
+        }
+
+    }
+
     async exportFile(storageFileId: string) {
         try {
             const storageFile = await this.getSingle<DBOStorageFile>(
-                'storageFiles', { storageFileId: storageFileId });
+                'storageFiles', { filter: { storageFileId: storageFileId } });
 
             if (!storageFile) { throw new AQServerDBError('Storage file entry has not been found'); }
             const storageHeader = await this.getSingle<DBOStorageHeader>(
-                'storageHeaders', { storageHeaderId: storageFile.storageHeaderId });
+                'storageHeaders', { filter: { storageHeaderId: storageFile.storageHeaderId } });
 
             if (!storageHeader) { throw new AQServerDBError('Storage file header has not found'); }
-            const dataChunks = await this.get('dataChunks',
-                { storageHeaderId: storageFile.storageHeaderId },
-                { orderBy: 'dataChunkId' });
 
+            logger.action('Fetching chunk headers');
+            const chunkHeaders = await this.get('dataChunks', {
+                orderBy: 'dataChunkId',
+                columns: ['dataChunkId'],
+                filter: { storageHeaderId: storageFile.storageHeaderId },
+            });
+
+            logger.info(`${chunkHeaders.length} chunk headers fetched`);
             const downloadsDir = 'downloads';
             if (!fs.existsSync(downloadsDir)) {
                 fs.mkdirSync(downloadsDir, { recursive: true })
@@ -152,8 +209,11 @@ export class SQLiteAdapter {
             let totalBytes = 0;
             let totalChunks = 0;
 
-            for (const dataChunk of dataChunks) {
-                const chunk = dataChunk.chunk;
+            for (const chunkHeader of chunkHeaders) {
+                const chunkId = chunkHeader.dataChunkId;
+                const chunkData = await this.getSingle<any>('dataChunks',
+                    { columns: ['blob'], filter: { dataChunkId: chunkId } });
+                const chunk = chunkData.blob;
                 crcCalculator.digest(chunk);
                 const buffer = Buffer.from(chunk);
                 await new Promise<void>((resolve) => {
@@ -182,9 +242,9 @@ export class SQLiteAdapter {
 
     async storeFile(
         file: string,
-        userId: number,
+        userId: string,
         originalFileName: string,
-        onBeforeTransactionEnds: (storageFileId: string) => void) {
+        onBeforeTransactionEnds: (storageFileId: string, file: string) => void) {
         try {
             const stat = fs.statSync(file);
             const fileSize = stat.size;
@@ -194,10 +254,9 @@ export class SQLiteAdapter {
             const storageFileId = randomBytes(16).toString('hex').toUpperCase();
 
             await this.beginTransaction();
-            const storageHeaderId = await this.insert('storageHeaders', {
-                fileSize: fileSize,
-                crc: fileCRC
-            });
+            const insertResult = await this.insert('storageHeaders', { fileSize: fileSize, crc: fileCRC });
+
+            const storageHeaderId = insertResult.lastId;
 
             await this.insert('storageFiles', {
                 storageFileId: storageFileId,
@@ -207,22 +266,25 @@ export class SQLiteAdapter {
             });
 
             const readStream = fs.createReadStream(file, { highWaterMark: bufferSize });
-            return await new Promise<string>((resolve, reject) => {
+            await new Promise<string>((resolve, reject) => {
                 let totalBytes = 0;
                 let totalChunks = 0;
                 const crcCalculator = new AQCRCCalc();
                 readStream.on('readable', async () => {
-                    let chunk;
-                    while (null !== (chunk = readStream.read())) {
-                        crcCalculator.digest(chunk);
-                        await this.insert('dataChunks', { storageHeaderId: storageHeaderId, chunk: chunk });
-                        totalBytes += chunk.length;
+                    let blob;
+                    while (null !== (blob = readStream.read())) {
+                        crcCalculator.digest(blob);
+                        await this.insert('dataChunks', {
+                            storageHeaderId: storageHeaderId,
+                            blob: blob
+                        });
+                        totalBytes += blob.length;
                         totalChunks++;
                         if (totalBytes === fileSize) {
                             if (crcCalculator.crc !== fileCRC) {
                                 reject(new AQServerDBError('DB_ERROR_FAILED_ADD_FILE', 'Mismatched CRC'));
                             }
-                            await onBeforeTransactionEnds(storageFileId);
+                            await onBeforeTransactionEnds(storageFileId, file);
                             await this.endTransaction();
                             logger.success('File stored successfully', {
                                 storageFileId: storageFileId,
@@ -247,7 +309,7 @@ export class SQLiteAdapter {
         }
     }
 
-    public async insert<T>(tableName: string, data: T) {
+    public async insert<T>(tableName: string, data: T): Promise<TRunResult> {
         try {
             let sql: string;
             if (Array.isArray(data)) {
@@ -256,34 +318,38 @@ export class SQLiteAdapter {
                 const values: TParam[] = data.flatMap((row) => Object.values(row));
                 sql = `INSERT INTO ${tableName} (${columns}) VALUES (${placeholders})`;
                 const result = await this.run(sql, values);
-                return result.changes;
+                return result;
             } else {
                 const columns = Object.keys(data as any).map((column) => `[${column}]`).join(', ');
                 const placeholders = Object.keys(data as any).map(() => '?').join(', ');
                 const values: TParam[] = Object.values(data as any);
                 sql = `INSERT INTO ${tableName} (${columns}) VALUES (${placeholders})`;
                 const result = await this.run(sql, values);
-                return result.lastId;
+                return result;
             }
         } catch (error) {
-            throw new AQServerDBError('DB_ERROR_INSERTING', error);
+            throw new AQServerDBError(`Failed to insert data`, error);
         }
     }
 
     public async run(sql: string, params: TParam[] = []): Promise<TRunResult> {
         await this.connect();
-        return new Promise<TRunResult>(async (resolve, reject) => {
+        const result = await new Promise<TRunResult>(async (resolve, reject) => {
             try {
                 this._db!.run(sql, params, function (error) {
                     if (error) { reject(error) }
                     const lastId = this?.lastID;
+                    const lastStringId = typeof this.lastID === 'number' ?
+                        this.lastID.toString() : typeof this.lastID === 'string' ?
+                            this.lastID : Buffer.from((this as any).lastID).toString();
                     const changes = this?.changes;
-                    resolve({ lastId: lastId, changes: changes });
+                    resolve({ lastStringId: lastStringId, lastId: lastId, changes: changes });
                 });
             } catch (error) {
                 reject(new AQServerDBError('DB_ERROR_RUN', error));
             }
         });
+        return result;
     }
 
     public async all<T>(sql: string, params: TParam[] = []): Promise<T[]> {
@@ -300,31 +366,42 @@ export class SQLiteAdapter {
         });
     }
 
-    public async getSingle<T>(tableName: string, filter?: TSQLiteObject, options?: SQLiteAdapterGetOptions) {
-        const result = await this.get<T>(tableName, filter, options);
+    public async getSingle<T>(tableName: string, options?: SQLiteAdapterGetOptions) {
+        const result = await this.get<T>(tableName, options);
         if (result?.length) { return result[0] }
+    }
+
+
+    public async getScalar<T = any>(tableName: string, filter?: TSQLiteObject, options?: SQLiteAdapterGetOptions) {
+        const result = await this.get<T>(tableName, options);
+        if (!result?.length) { return null }
+        const row: any = result[0];
+        const values = Object.values;
+        if (!values?.length) { return null; }
+        const value: any = (values as any)[0];
+        return value;
     }
 
     public async get<T = any>(
         tableName: string,
-        filter?: TSQLiteObject,
         options?: SQLiteAdapterGetOptions
     ): Promise<Array<T>> {
-
         await this.connect();
         const maxResults = options?.maxResults;
         const orderBy = options?.orderBy;
         let sql: string;
         let params: any = [];
 
-        if (filter && typeof filter === 'object') {
-            const conditions = Object.entries(filter).map(([column, value]) => {
+        const selection = options?.columns?.length ? options.columns.join(', ') : '*';
+
+        if (options?.filter && typeof options.filter === 'object') {
+            const conditions = Object.entries(options.filter).map(([column, value]) => {
                 params.push(value);
                 return `[${column}] = ?`;
             }).join(' AND ');
-            sql = `SELECT * FROM ${tableName} WHERE ${conditions}`;
+            sql = `SELECT ${selection} FROM ${tableName} WHERE ${conditions}`;
         } else {
-            sql = `SELECT * FROM ${tableName}`;
+            sql = `SELECT ${selection} FROM ${tableName}`;
         }
 
         if (orderBy) {
@@ -333,16 +410,14 @@ export class SQLiteAdapter {
                 sql += ` ORDER BY ${columns}`;
             } else { sql += ` ORDER BY [${orderBy}]`; }
         }
-        if (maxResults) {
-            sql += ' LIMIT ?';
-            params.push(maxResults);
-        }
-        return new Promise((resolve, reject) => {
-            this._db!.all(sql, params, (err, data) => {
+        if (maxResults) { sql += ' LIMIT ?'; params.push(maxResults); }
+        const result = await new Promise<T[]>((resolve, reject) => {
+            this._db!.all<T>(sql, params, (err, data) => {
                 if (err) { return reject(err) }
-                resolve(data as Array<T>);
+                resolve(data);
             });
         });
+        return result;
     }
 
     public async delete(tableName: string, filter: any) {

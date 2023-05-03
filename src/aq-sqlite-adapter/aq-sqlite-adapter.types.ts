@@ -1,7 +1,9 @@
 export type TDBDataType = 'INTEGER' | 'TEXT' | 'BLOB';
 export type TDBState = 'OPEN' | 'CLOSED';
 export type TParam = string | number;
-export type TRunResult = { lastId: number, changes: number };
+export type TRunResult = { lastId: number, lastStringId: string, changes: number };
+
+export const DBNull = Symbol();
 
 export type TDefaultValues =
     number |
@@ -29,7 +31,9 @@ export type SQLiteAdapterOptions = {
 export type SQLiteAdapterGetOptions = {
     maxResults?: number,
     orderBy?: string[] | string,
-    pageIndex?: number
+    pageIndex?: number,
+    columns?: string[],
+    filter?: TSQLiteObject
 }
 
 export type TOrderByItem = {
